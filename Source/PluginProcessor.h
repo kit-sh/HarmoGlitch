@@ -1,6 +1,12 @@
 #pragma once
 
+#if defined (__APPLE__)
+ #include <dispatch/dispatch.h>
+#endif
+
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_dsp/juce_dsp.h>
+#include <vector>
 
 class HarmonicGlitchAudioProcessor : public juce::AudioProcessor
 {
@@ -35,5 +41,42 @@ public:
 
 private:
   static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+  std::atomic<float>* dryWetParam = nullptr;
+
+  juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedDryWet;
+
+  static constexpr int fftOrder = 11;
+  static constexpr int fftSize = 1 << fftOrder;
+  static constexpr int hopSize = 512;
+
+  juce::dsp::FFT fft { fftOrder};
+  juce::dsp::WindowingFunction<float> window { static_cast<size_t>(fftSize), juce::dsp::WindowingFunction<float>::hann };
+
+  struct ChannelSTFT
+  {
+      std::vector<float> inputBuffer;
+      int writePos = 0;
+
+      std::vector<float> outputBuffer;
+      int readPos = 0;
+
+      std::vector<float> fftData;
+
+      void prepare() {
+          inputBuffer.assign(fftSize, 0.0f);
+          outputBuffer.assign(fftSize * 2, 0.0f);
+          fftData.assign(fftSize * 2, 0.0f);
+          writePos = 0;
+          readPos = 0;
+      }
+  };
+
+  std::vector<ChannelSTFT> stftChannels;
+
+  void processSTFTFrame(ChannelSTFT& stft);
+
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HarmonicGlitchAudioProcessor)
+
+
 };
