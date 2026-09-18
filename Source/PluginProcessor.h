@@ -63,10 +63,17 @@ private:
 
       std::vector<float> fftData;
 
+      std::vector<float> harmonicData;
+      std::vector<float> noiseData;
+
       void prepare() {
           inputBuffer.assign(fftSize, 0.0f);
           outputBuffer.assign(fftSize * 2, 0.0f);
           fftData.assign(fftSize * 2, 0.0f);
+
+          harmonicData.assign(fftSize * 2, 0.0f);
+          noiseData.assign(fftSize * 2, 0.0f);
+
           writePos = 0;
           readPos = 0;
       }
