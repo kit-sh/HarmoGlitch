@@ -11,20 +11,53 @@ HarmonicGlitchAudioProcessor::HarmonicGlitchAudioProcessor()
       apvts (*this, nullptr, "Parameters", createParameterLayout())
 {
   dryWetParam = apvts.getRawParameterValue("drywet");
+
+  topNParam = apvts.getRawParameterValue("topN");
+  noiseVolParam = apvts.getRawParameterValue("noiseVol");
+
+  for (int i=0; i < MAX_PEAKS; i++) {
+    const juce::String pIdx = juce::String(i);
+    peakPitchParams[static_cast<size_t>(i)] = apvts.getRawParameterValue("peak_" + pIdx + "_pitch");
+    peakVolParams[static_cast<size_t>(i)] = apvts.getRawParameterValue("peak_" + pIdx + "_vol");
+  }
 }
 
 HarmonicGlitchAudioProcessor::~HarmonicGlitchAudioProcessor() {}
 
 juce::AudioProcessorValueTreeState::ParameterLayout HarmonicGlitchAudioProcessor::createParameterLayout()
 {
-  juce::AudioProcessorValueTreeState::ParameterLayout layout;
-  layout.add (std::make_unique<juce::AudioParameterFloat> (
-      juce::ParameterID { "drywet", 1 },
-      "Dry/Wet",
-      juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f),
-      0.5f
-  ));
-  return layout;
+  std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
+
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+    juce::ParameterID{"drywet", 1}, "Dry/Wet",
+    juce::NormalisableRange<float>{0.0f, 1.0f, 0.01f},
+    0.5f
+    ));
+
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+    juce::ParameterID{"topN", 1}, "Active Peaks", 1, MAX_PEAKS, MAX_PEAKS
+    ));
+
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+    juce::ParameterID{"noiseVol", 1}, "Noise Level",
+    juce::NormalisableRange<float>{0.0f, 2.0f, 0.01f}, 1.0f
+    ));
+
+  for (int i = 0; i < MAX_PEAKS; i++) {
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{"peak_" + juce::String(i) + "_pitch", 1},
+      "Peak " + juce::String(i+1) + " Pitch",
+      juce::NormalisableRange<float>{-200.0f, 200.0f, 1.0f}, 0.0f
+      ));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{"peak_" + juce::String(i) + "_vol", 1},
+      "Peak " + juce::String(i+1) + " Vol",
+      juce::NormalisableRange<float>{-48.0f, 12.0f, 0.1f}, 0.0f
+      ));
+  }
+
+  return {params.begin(), params.end()};
 }
 
 void HarmonicGlitchAudioProcessor::prepareToPlay (double sampleRate, int) {
@@ -146,23 +179,29 @@ void HarmonicGlitchAudioProcessor::processSTFTFrame(ChannelSTFT &stft) {
 
   std::fill(stft.harmonicData.begin(), stft.harmonicData.end(), 0.0f);
 
-  const float pitchRatio = 1.5f;
+  const int activeTopN = *apvts.getRawParameterValue("topN");
+  const size_t processCount = std::min(static_cast<size_t>(activeTopN), peaks.size());
 
-  for (const auto& peak : peaks) {
+  for (size_t i = 0; i < processCount; i++){
+    const juce::String pIdx = juce::String(i);
 
-    //仮
-    const int startBin = std::max (0, peak.bin - 1);
-    const int endBin   = std::min (numBins - 1, peak.bin + 1);
+    const float cents = *apvts.getRawParameterValue("peak_" + pIdx + "_pitch");
+    const float peakDb = *apvts.getRawParameterValue("peak_" + pIdx + "_vol");
+    const float peakGain = (peakDb <= -47.9f) ? 0.0f : juce::Decibels::decibelsToGain(peakDb);
 
-    for (int b = startBin; b <= endBin; ++b)
-    {
-      // ピッチシフト位置の計算
-      int targetBin = static_cast<int> (std::round (b * pitchRatio));
 
-      if (targetBin > 0 && targetBin < numBins)
-      {
-        stft.harmonicData[static_cast<size_t> (2 * targetBin)]     = stft.fftData[static_cast<size_t> (2 * b)];
-        stft.harmonicData[static_cast<size_t> (2 * targetBin + 1)] = stft.fftData[static_cast<size_t> (2 * b + 1)];
+    const float pitchRatio = std::pow(2.0f, cents / 1200.0f);
+
+    const auto& peak = peaks[i];
+    const int startBin = std::max(0, peak.bin -1);
+    const int endBin = std::min(numBins - 1, peak.bin + 1);
+
+    for (int b = startBin; b <= endBin; b++) {
+      const int targetBin = static_cast<int>(std::round(b * pitchRatio));
+
+      if (targetBin > 0 && targetBin < numBins) {
+        stft.harmonicData[static_cast<size_t>(2 * targetBin)] += stft.fftData[static_cast<size_t>(2 * b)] * peakGain;
+        stft.harmonicData[static_cast<size_t>(2 * targetBin + 1)] += stft.fftData[static_cast<size_t>(2 * b + 1)] * peakGain;
       }
     }
   }

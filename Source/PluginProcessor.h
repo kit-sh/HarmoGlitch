@@ -39,10 +39,20 @@ public:
 
   juce::AudioProcessorValueTreeState apvts;
 
+
+
 private:
   static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
+  static constexpr int MAX_PEAKS = 8;
+
+
   std::atomic<float>* dryWetParam = nullptr;
+  std::atomic<float>* topNParam = nullptr;
+  std::atomic<float>* noiseVolParam = nullptr;
+
+  std::array<std::atomic<float>*, MAX_PEAKS> peakPitchParams {};
+  std::array<std::atomic<float>*, MAX_PEAKS> peakVolParams {};
 
   juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedDryWet;
 
