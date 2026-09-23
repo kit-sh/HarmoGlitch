@@ -21,6 +21,7 @@ juce_add_plugin(HarmonicGlitchPlugin
     PLUGIN_CODE Hglp
     FORMATS VST3 Standalone # 必要なフォーマットを指定
     PRODUCT_NAME "HarmonicGlitch"
+    JUCE_VST3_CAN_REPLACE_VST2 FALSE
 )
 
 # ソースファイルの指定
@@ -40,4 +41,8 @@ target_link_libraries(HarmonicGlitchPlugin
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
+)
+
+target_compile_definitions(HarmonicGlitchPlugin PRIVATE
+        JUCE_VST3_CAN_REPLACE_VST2=0
 )
