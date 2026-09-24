@@ -34,13 +34,27 @@ juce::AudioProcessorValueTreeState::ParameterLayout HarmonicGlitchAudioProcessor
     0.5f
     ));
 
-  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+  params.push_back(std::make_unique<juce::AudioParameterInt>(
     juce::ParameterID{"topN", 1}, "Active Peaks", 1, MAX_PEAKS, MAX_PEAKS
     ));
 
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
     juce::ParameterID{"noiseVol", 1}, "Noise Level",
     juce::NormalisableRange<float>{0.0f, 2.0f, 0.01f}, 1.0f
+    ));
+
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+    juce::ParameterID{"masterVol", 1},
+    "Master Vol",
+    juce::NormalisableRange<float>(-48.0f, 12.0f, 0.1f, 0.5f),
+    0.0f
+    ));
+
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+    juce::ParameterID{"prominence", 1},
+    "Prominence",
+    juce::NormalisableRange<float>{0.0001f, 0.05f, 0.0001, 0.4f},
+    0.005f
     ));
 
   for (int i = 0; i < MAX_PEAKS; i++) {
@@ -107,7 +121,7 @@ void HarmonicGlitchAudioProcessor::processSTFTFrame(ChannelSTFT &stft) {
 
   for (int i=0; i<numBins; i++) {
     const float real = stft.fftData[static_cast<size_t>(2*i)];
-    const float imag = stft.fftData[static_cast<size_t>(2*1 + 1)];
+    const float imag = stft.fftData[static_cast<size_t>(2*i + 1)];
     magnitudes[static_cast<size_t>(i)] = std::sqrt(real * real + imag * imag);
   }
 
@@ -139,7 +153,7 @@ void HarmonicGlitchAudioProcessor::processSTFTFrame(ChannelSTFT &stft) {
     }
 
     float minRight = pMag;
-    for (int i=pIdx + 1; i < peaks.size(); i++) {
+    for (int i=pIdx + 1; i < numBins; i++) {
       if (magnitudes[i] > pMag) break;
       minRight = std::min(minRight, magnitudes[i]);
     }
@@ -148,7 +162,9 @@ void HarmonicGlitchAudioProcessor::processSTFTFrame(ChannelSTFT &stft) {
 
     const float prominence = pMag - base;
 
-    if (prominence > 0.005f) {
+    const float prominenceThreshold = *apvts.getRawParameterValue("prominence");
+
+    if (prominence > prominenceThreshold) {
       peaks.push_back({
         pIdx,
         pMag,
@@ -216,7 +232,7 @@ void HarmonicGlitchAudioProcessor::processSTFTFrame(ChannelSTFT &stft) {
 
   fft.performRealOnlyInverseTransform(stft.fftData.data());
 
-  const float overlapSclae = 1.0f / (1.5f * 2.0f);
+  const float overlapScale = 1.0f / (1.5f * 2.0f);
   window.multiplyWithWindowingTable(stft.fftData.data(), fftSize);
 
   const int outputBufferSize = static_cast<int>(stft.outputBuffer.size());
@@ -224,7 +240,7 @@ void HarmonicGlitchAudioProcessor::processSTFTFrame(ChannelSTFT &stft) {
 
   for (int i = 0; i < fftSize; i++) {
     const int outIdx = (currentWritePos + i) % outputBufferSize;
-    stft.outputBuffer[static_cast<size_t>(outIdx)] += stft.fftData[static_cast<size_t>(i)] * overlapSclae;
+    stft.outputBuffer[static_cast<size_t>(outIdx)] += stft.fftData[static_cast<size_t>(i)] * overlapScale;
   }
 
   std::copy(stft.inputBuffer.begin() + hopSize, stft.inputBuffer.end(), stft.inputBuffer.begin());
@@ -234,6 +250,12 @@ void HarmonicGlitchAudioProcessor::processSTFTFrame(ChannelSTFT &stft) {
 void HarmonicGlitchAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
   juce::ScopedNoDenormals noDenormals;
+
+  const float inputThreshold = 0.001f;
+  if (buffer.getRMSLevel(0, 0, buffer.getNumSamples()) < inputThreshold) {
+    buffer.clear();
+    return;
+  }
 
   const int numChannels = buffer.getNumChannels();
   const int numSamples = buffer.getNumSamples();
@@ -275,6 +297,25 @@ void HarmonicGlitchAudioProcessor::processBlock (juce::AudioBuffer<float>& buffe
 
       const float drySample = dryBuffer.getSample(ch, i);
       buffer.setSample(ch, i, (drySample * dryGain) + (wetSample * wetGain));
+    }
+  }
+
+  const float masterDb = *apvts.getRawParameterValue("masterVol");
+  const float masterGain = (masterDb <= -47.9) ? 0.0f : juce::Decibels::decibelsToGain(masterDb);
+
+  for (int ch = 0; ch < numChannels; ch++) {
+    float* channelData = buffer.getWritePointer(ch);
+
+    for (int i = 0; i < numChannels; i++) {
+      float s = channelData[i];
+
+      if (std::isnan(s) || std::isinf(s)) s = 0.0f;
+
+      s = std::tanh(s);
+
+      s *= masterGain;
+
+      channelData[i] = s;
     }
   }
 }
