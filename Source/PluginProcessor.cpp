@@ -20,6 +20,10 @@ HarmonicGlitchAudioProcessor::HarmonicGlitchAudioProcessor()
     peakPitchParams[static_cast<size_t>(i)] = apvts.getRawParameterValue("peak_" + pIdx + "_pitch");
     peakVolParams[static_cast<size_t>(i)] = apvts.getRawParameterValue("peak_" + pIdx + "_vol");
   }
+
+  for (auto& v : scopeMagnitudes)  v.store (0.0f);
+  for (auto& v : scopePeakBins)    v.store (0);
+  for (auto& v : scopeTargetBins)  v.store (0.0f);
 }
 
 HarmonicGlitchAudioProcessor::~HarmonicGlitchAudioProcessor() {}
@@ -198,8 +202,11 @@ void HarmonicGlitchAudioProcessor::processSTFTFrame(ChannelSTFT &stft) {
   const int activeTopN = *apvts.getRawParameterValue("topN");
   const size_t processCount = std::min(static_cast<size_t>(activeTopN), peaks.size());
 
+  const float peakScale = 1.0f / std::sqrt (static_cast<float> (std::max (1, static_cast<int>(processCount))));
+
   for (size_t i = 0; i < processCount; i++){
     const juce::String pIdx = juce::String(i);
+
 
     const float cents = *apvts.getRawParameterValue("peak_" + pIdx + "_pitch");
     const float peakDb = *apvts.getRawParameterValue("peak_" + pIdx + "_vol");
@@ -212,21 +219,51 @@ void HarmonicGlitchAudioProcessor::processSTFTFrame(ChannelSTFT &stft) {
     const int startBin = std::max(0, peak.bin -1);
     const int endBin = std::min(numBins - 1, peak.bin + 1);
 
+
     for (int b = startBin; b <= endBin; b++) {
       const int targetBin = static_cast<int>(std::round(b * pitchRatio));
 
+      float gain = (b == peak.bin) ? 1.0f : 0.5f;
+
       if (targetBin > 0 && targetBin < numBins) {
-        stft.harmonicData[static_cast<size_t>(2 * targetBin)] += stft.fftData[static_cast<size_t>(2 * b)] * peakGain;
-        stft.harmonicData[static_cast<size_t>(2 * targetBin + 1)] += stft.fftData[static_cast<size_t>(2 * b + 1)] * peakGain;
+        stft.harmonicData[static_cast<size_t>(2 * targetBin)] += stft.fftData[static_cast<size_t>(2 * b)] * peakGain * gain * peakScale;
+        stft.harmonicData[static_cast<size_t>(2 * targetBin + 1)] += stft.fftData[static_cast<size_t>(2 * b + 1)] * peakGain * gain * peakScale;
       }
     }
   }
 
+  const float noiseLevel    = *apvts.getRawParameterValue ("noiseVol");
   const float harmonicLevel = 1.0f;
-  const float noiseLevel = 1.0f;
 
   for (size_t i = 0; i < stft.fftData.size(); i++) {
     stft.fftData[i] = (stft.harmonicData[i] * harmonicLevel) + (stft.noiseData[i] * noiseLevel);
+  }
+
+  //スペアナ用
+  for (int i = 0; i < scopeSize && i < numBins; i++) {
+    const float real = stft.fftData[static_cast<size_t>(2 * i)];
+    const float imag = stft.fftData[static_cast<size_t>(2 * i + 1)];
+    const float postMag = std::sqrt(real * real + imag * imag) / static_cast<float>(numBins);
+
+    scopeMagnitudes[i].store(postMag, std::memory_order_relaxed);
+  }
+
+
+  const int count = static_cast<int>(processCount);
+
+  const int safePeakCount = std::min({
+    static_cast<int>(processCount),
+    static_cast<int>(peaks.size()),
+    16
+  });
+  scopeNumPeaks.store(safePeakCount, std::memory_order_relaxed);
+
+  for (int i = 0; i < safePeakCount; i++) {
+    const float cents = *apvts.getRawParameterValue("peak_" + juce::String(i) + "_pitch");
+    const float pitchRatio = std::pow(2.0f, cents / 1200.0f);
+
+    scopePeakBins[i].store(peaks[i].bin, std::memory_order_relaxed);
+    scopeTargetBins[i].store(static_cast<float>(peaks[i].bin) * pitchRatio, std::memory_order_relaxed);
   }
 
 
@@ -235,12 +272,14 @@ void HarmonicGlitchAudioProcessor::processSTFTFrame(ChannelSTFT &stft) {
   const float overlapScale = 1.0f / (1.5f * 2.0f);
   window.multiplyWithWindowingTable(stft.fftData.data(), fftSize);
 
+  juce::FloatVectorOperations::multiply (stft.fftData.data(), overlapScale, static_cast<int>(fftSize));
+
   const int outputBufferSize = static_cast<int>(stft.outputBuffer.size());
   const int currentWritePos = stft.readPos;
 
   for (int i = 0; i < fftSize; i++) {
     const int outIdx = (currentWritePos + i) % outputBufferSize;
-    stft.outputBuffer[static_cast<size_t>(outIdx)] += stft.fftData[static_cast<size_t>(i)] * overlapScale;
+    stft.outputBuffer[static_cast<size_t>(outIdx)] += stft.fftData[static_cast<size_t>(i)];
   }
 
   std::copy(stft.inputBuffer.begin() + hopSize, stft.inputBuffer.end(), stft.inputBuffer.begin());
@@ -306,7 +345,7 @@ void HarmonicGlitchAudioProcessor::processBlock (juce::AudioBuffer<float>& buffe
   for (int ch = 0; ch < numChannels; ch++) {
     float* channelData = buffer.getWritePointer(ch);
 
-    for (int i = 0; i < numChannels; i++) {
+    for (int i = 0; i < numSamples; i++) {
       float s = channelData[i];
 
       if (std::isnan(s) || std::isinf(s)) s = 0.0f;

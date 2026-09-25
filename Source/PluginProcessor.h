@@ -7,6 +7,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 #include <vector>
+#include <atomic>
 
 class HarmonicGlitchAudioProcessor : public juce::AudioProcessor
 {
@@ -38,6 +39,12 @@ public:
   void setStateInformation (const void* data, int sizeInBytes) override;
 
   juce::AudioProcessorValueTreeState apvts;
+
+  static constexpr int scopeSize = 256;
+  std::array<std::atomic<float>, scopeSize> scopeMagnitudes;
+  std::array<std::atomic<int>, 16> scopePeakBins;
+  std::array<std::atomic<float>, 16> scopeTargetBins;
+  std::atomic<int> scopeNumPeaks {0};
 
 
 

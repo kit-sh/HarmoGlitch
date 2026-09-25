@@ -2,11 +2,13 @@
 #include "PluginEditor.h"
 
 HarmonicGlitchAudioProcessorEditor::HarmonicGlitchAudioProcessorEditor (HarmonicGlitchAudioProcessor& p)
-    : AudioProcessorEditor (&p), audioProcessor (p)
+    : AudioProcessorEditor (&p), audioProcessor (p), spectrumVisualizer (p)
 {
     setLookAndFeel(&customLaf);
 
-    setSize(800, 580);
+    setSize(800, 680);
+    addAndMakeVisible(spectrumVisualizer);
+
     setupSlider(dryWetSlider, dryWetLabel, "Dry / Wet");
     dryWetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.apvts, "drywet", dryWetSlider);
@@ -42,7 +44,14 @@ HarmonicGlitchAudioProcessorEditor::HarmonicGlitchAudioProcessorEditor (Harmonic
         peakVolSliders[i].setTextValueSuffix(" dB");
         peakVolAttachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             audioProcessor.apvts, "peak_" + pIdx + "_vol", peakVolSliders[i]);
+
+        const auto col = PeakColours::getColour (i);
+
+        // ★ この設定が LookAndFeel 側の findColour で読み出される
+        peakPitchSliders[i].setColour (juce::Slider::rotarySliderFillColourId, col);
+        peakVolSliders[i].setColour  (juce::Slider::rotarySliderFillColourId, col);
     }
+
 
 }
 
@@ -74,22 +83,25 @@ void HarmonicGlitchAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawText ("HarmoGlitch", 20, 12, 300, 25, juce::Justification::left);
 
     g.setColour(juce::Colour(0xff222428));
-    g.fillRoundedRectangle(15.0f, 45.0f, 790.0f, 135.0f, 8.0f);
-    g.fillRoundedRectangle(15.0f, 185.0f, 790.0f, 375.0f, 8.0f);
+    g.fillRoundedRectangle(15.0f, 40.0f, 790.0f, 130.0f, 8.0f);
+    g.fillRoundedRectangle(15.0f, 180.0f, 790.0f, 100.0f, 8.0f);
+    g.fillRoundedRectangle(15.0f, 290.0f, 790.0f, 375.0f, 8.0f);
 
     g.setColour(juce::Colour(0xff32363e));
-    g.drawRoundedRectangle(15.0f, 45.0f, 790.0f, 135.f, 8.0f, 1.0f);
-    g.drawRoundedRectangle(15.0f, 185.0f, 790.0f, 375.f, 8.0f, 1.0f);
+    g.drawRoundedRectangle(15.0f, 40.0f, 790.0f, 130.f, 8.0f, 1.0f);
+    g.drawRoundedRectangle(15.0f, 180.0f, 790.0f, 100.f, 8.0f, 1.0f);
+    g.drawRoundedRectangle(15.0f, 290.0f, 790.0f, 375.f, 8.0f, 1.0f);
 
     g.setColour(juce::Colour(0xff00e676));
     g.setFont(11.0f);
     g.drawText("GLOBAL CONTROLS", 25, 46, 150, 15, juce::Justification::left);
-    g.drawText("PEAK PARAMETERS (P1 - P8)", 25, 190, 300, 15, juce::Justification::left);
+    g.drawText("SPECTRUM", 25, 186, 200, 15, juce::Justification::left);
+    g.drawText("PEAK PARAMETERS (P1 - P8)", 25, 296, 300, 15, juce::Justification::left);
 }
 
 void HarmonicGlitchAudioProcessorEditor::resized()
 {
-    auto globalArea = juce::Rectangle<int>(25, 62, 770, 105);
+    auto globalArea = juce::Rectangle<int>(25, 62, 770, 100);
     const int globalWidth = globalArea.getWidth() / 5;
 
     auto setupCell = [](juce::Rectangle<int> area, juce::Label& label, juce::Slider& slider) {
@@ -103,8 +115,10 @@ void HarmonicGlitchAudioProcessorEditor::resized()
     setupCell(globalArea.removeFromLeft(globalWidth), prominenceLabel, prominenceSlider);
     setupCell(globalArea, masterVolLabel, masterVolSlider);
 
+    spectrumVisualizer.setBounds(25, 205, 770, 70);
 
-    auto peakArea = juce::Rectangle<int>(25, 210, 770, 340);
+
+    auto peakArea = juce::Rectangle<int>(25, 315, 770, 340);
     const int colWidth = peakArea.getWidth() / numPeaks;
     const int rowHeight = peakArea.getHeight() / 2;
 
